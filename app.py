@@ -1191,6 +1191,44 @@ def inject_custom_dark_css() -> None:
 # ============================================================================
 
 
+
+def resolve_gemini_api_key() -> str:
+    """
+    Resolves the Gemini API key strictly from server-side configuration
+    (`st.secrets` or environment variables / `.env`) so the secret key is
+    NEVER exposed, rendered, or editable on the frontend UI.
+    """
+    # 1. Check .env file in working directory if python-dotenv is installed or parse manually
+    try:
+        from dotenv import load_dotenv
+        load_dotenv()
+    except ImportError:
+        env_path = os.path.join(os.getcwd(), ".env")
+        if os.path.isfile(env_path):
+            with open(env_path, "r", encoding="utf-8") as env_file:
+                for line in env_file:
+                    stripped = line.strip()
+                    if stripped and not stripped.startswith("#") and "=" in stripped:
+                        k, v = stripped.split("=", 1)
+                        os.environ.setdefault(k.strip(), v.strip().strip("\"\x27"))
+
+    # 2. Check environment variables
+    env_key = os.environ.get("GEMINI_API_KEY", "") or os.environ.get("GOOGLE_API_KEY", "")
+    if env_key.strip():
+        return env_key.strip()
+
+    # 3. Check Streamlit secrets (.streamlit/secrets.toml)
+    try:
+        if hasattr(st, "secrets"):
+            for secret_name in ("GEMINI_API_KEY", "GOOGLE_API_KEY", "gemini_api_key"):
+                if secret_name in st.secrets and str(st.secrets[secret_name]).strip():
+                    return str(st.secrets[secret_name]).strip()
+    except Exception:
+        pass
+
+    return ""
+
+
 def init_session_state() -> None:
     """Initializes persistent Streamlit session state variables."""
     if "active_roadmap" not in st.session_state:
@@ -1223,14 +1261,7 @@ def render_sidebar() -> Tuple[str, GenerationRequest, bool, bool]:
             unsafe_allow_html=True,
         )
 
-        env_key = os.environ.get("GEMINI_API_KEY", "")
-        api_key = st.text_input(
-            "GEMINI API KEY",
-            value=env_key,
-            type="password",
-            placeholder="AIzaSy...",
-            help="Enter your Google AI Studio API key (`GEMINI_API_KEY`).",
-        )
+        api_key = resolve_gemini_api_key()
 
         st.markdown("#### 01 // TARGET SPECIFICATION")
         subject = st.text_input(
@@ -1615,7 +1646,7 @@ def main() -> None:
             st.error(f"Validation Error: {validation_err}")
         elif not api_key.strip():
             st.warning(
-                "Please enter your Google Gemini API Key in the left sidebar (or set `GEMINI_API_KEY` in your environment) to synthesize a custom roadmap."
+                "Server configuration missing `GEMINI_API_KEY`. Set `GEMINI_API_KEY` in your environment, `.env` file, or `.streamlit/secrets.toml` to enable AI synthesis."
             )
         else:
             with st.status(
